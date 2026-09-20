@@ -1,0 +1,23 @@
+{
+  "name": "backend-interview-daily",
+  "version": "1.0.0",
+  "description": "Daily Backend Interview Practice challenges covering Node.js, Redis, Databases, and System Design",
+  "type": "module",
+  "main": "scripts/post-challenge.js",
+  "scripts": {
+    "dry-run": "node scripts/post-challenge.js --dry-run",
+    "post-today": "node scripts/post-challenge.js",
+    "validate": "node scripts/validate-challenges.js"
+  },
+  "keywords": [
+    "backend",
+    "interview-practice",
+    "nodejs",
+    "redis",
+    "system-design",
+    "mongodb",
+    "postgresql"
+  ],
+  "author": "kunj-21",
+  "license": "MIT"
+}

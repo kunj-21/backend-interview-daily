@@ -1,0 +1,639 @@
+[
+  {
+    "day": 1,
+    "title": "Mastering the Node.js Event Loop & Microtask Execution Order",
+    "topic": "Node.js & Express",
+    "difficulty": "Medium",
+    "estimatedMinutes": 30,
+    "tags": [
+      "nodejs",
+      "event-loop",
+      "concurrency",
+      "async"
+    ],
+    "summary": "Explain and trace the exact order of execution among process.nextTick, Promise.then, setTimeout, setImmediate, and fs I/O callbacks.",
+    "problemStatement": "In production, an Express API middleware is sporadically deferring high-priority cache lookups behind pending network I/O. Predict the exact execution order of the code snippet below and explain the mechanics of libuv event loop phases vs V8 microtask queues.",
+    "keyRequirements": [
+      "Detail the distinction between the NextTick queue, Microtask queue (Promises), Timers phase, Poll (I/O) phase, and Check (setImmediate) phase.",
+      "Explain why process.nextTick starvation can lock the event loop.",
+      "Identify the exact console output order of the starter code.",
+      "Refactor the code to ensure a critical async operation does not starve I/O."
+    ],
+    "starterCode": "import fs from 'fs';\n\nconsole.log('1. Script Start');\n\nsetTimeout(() => console.log('2. setTimeout 0ms'), 0);\nsetImmediate(() => console.log('3. setImmediate'));\n\nPromise.resolve().then(() => console.log('4. Promise microtask'));\nprocess.nextTick(() => console.log('5. nextTick microtask'));\n\nfs.readFile('package.json', () => {\n  console.log('6. I/O poll phase');\n  setTimeout(() => console.log('7. Nested setTimeout'), 0);\n  setImmediate(() => console.log('8. Nested setImmediate'));\n  process.nextTick(() => console.log('9. Nested nextTick'));\n});\n\nconsole.log('10. Script End');",
+    "hints": [
+      "Remember: process.nextTick is processed before Promise microtasks, and microtasks run immediately after the current operation finishes before moving to the next libuv phase.",
+      "Inside an I/O callback (poll phase), check phase (setImmediate) ALWAYS executes before timers phase (setTimeout) in the subsequent loop iteration."
+    ],
+    "rubric": [
+      "Predicted the exact output sequence: 1, 10, 5, 4, 2, 3 (or 3, 2 depending on process startup), then 6, 9, 8, 7",
+      "Correctly explained that inside fs.readFile callback, setImmediate is guaranteed to run before setTimeout(0)",
+      "Explained how infinite recursive process.nextTick starves the I/O event loop while setImmediate does not"
+    ]
+  },
+  {
+    "day": 2,
+    "title": "Sliding Window Log Rate Limiter using Redis Sorted Sets (ZSET)",
+    "topic": "Redis & Caching",
+    "difficulty": "Medium",
+    "estimatedMinutes": 40,
+    "tags": [
+      "redis",
+      "rate-limiting",
+      "caching",
+      "zset"
+    ],
+    "summary": "Implement a production-ready sliding window rate limiter in Node.js using Redis Sorted Sets to prevent API abuse.",
+    "problemStatement": "Fixed-window rate limiters suffer from burst traffic at window boundaries (e.g. 100 reqs at 11:59 and 100 reqs at 12:00 = 200 reqs in 2 seconds). Build a sliding window rate limiter function `isAllowed(userId, limit, windowSeconds)` using Redis ZSETs where each request timestamp is stored as both score and member.",
+    "keyRequirements": [
+      "Remove timestamps older than (currentTime - windowSeconds) using ZREMRANGEBYSCORE.",
+      "Count remaining elements in the set with ZCARD.",
+      "If count < limit, add the current timestamp with ZADD and refresh key TTL with EXPIRE.",
+      "Ensure the entire operation is atomic using a Redis Multi/Transaction or Lua script to avoid race conditions."
+    ],
+    "starterCode": "import Redis from 'ioredis';\nconst redis = new Redis();\n\n/**\n * @param {string} userId \n * @param {number} limit Maximum requests allowed in the window\n * @param {number} windowSeconds Window duration in seconds\n * @returns {Promise<{ allowed: boolean, remaining: number, resetAfterMs: number }>}\n */\nexport async function slidingWindowRateLimiter(userId, limit = 10, windowSeconds = 60) {\n  // TODO: Implement sliding window with Redis ZSET / MULTI pipeline\n}",
+    "hints": [
+      "Use Date.now() or high-resolution timestamp as the score in ZSET.",
+      "Wrap zremrangebyscore, zcard, zadd, and expire in redis.multi() or a Lua script so concurrent requests don't read stale counts."
+    ],
+    "rubric": [
+      "Atomic execution via Redis transaction (MULTI/EXEC) or Lua script",
+      "Correctly evicts expired entries before checking ZCARD",
+      "Sets appropriate key TTL to avoid orphaned Redis memory",
+      "Returns remaining limit and retry/reset headers"
+    ]
+  },
+  {
+    "day": 3,
+    "title": "Designing an Idempotent Payment & Order API",
+    "topic": "System Design & Scalability",
+    "difficulty": "Hard",
+    "estimatedMinutes": 45,
+    "tags": [
+      "system-design",
+      "idempotency",
+      "payments",
+      "redis",
+      "mongodb"
+    ],
+    "summary": "Design and implement idempotency keys to ensure charging a card or placing an order is never executed twice during network retries.",
+    "problemStatement": "Mobile clients and payment gateways often retry POST /api/orders on network drops or timeouts. If the original request actually succeeded on the server, the user could be charged twice. Design an Idempotency Middleware and database pattern.",
+    "keyRequirements": [
+      "Inspect Idempotency-Key HTTP header from the client.",
+      "Acquire an atomic processing lock in Redis with SET key value NX EX 30.",
+      "If lock fails and status is 'processing', return HTTP 409 Conflict or 425 Too Early.",
+      "If key already has a cached completed response in MongoDB/Redis, return the exact cached response with an 'Idempotent-Replay: true' header.",
+      "If it is a new request, execute handler, persist the response body and status, and release the processing lock."
+    ],
+    "starterCode": "import express from 'express';\nimport redis from './redis.js';\n\nexport function idempotencyMiddleware(options = { expirySeconds: 86400 }) {\n  return async (req, res, next) => {\n    const idempotencyKey = req.headers['idempotency-key'];\n    if (!idempotencyKey) return next();\n    \n    // TODO: Implement atomic lock & cached response replay\n  };\n}",
+    "hints": [
+      "Store both request hash (to detect payload tampering with the same key) and response body.",
+      "Handle server crash while status is 'processing' — TTL on the lock is critical!"
+    ],
+    "rubric": [
+      "Handled 3 distinct states: First request (process), Concurrent duplicate (wait/conflict), Completed duplicate (replay cached response)",
+      "Detected payload mismatch for reused idempotency keys",
+      "Guaranteed atomic lock acquisition via Redis SET NX EX"
+    ]
+  },
+  {
+    "day": 4,
+    "title": "Database Indexing & The ESR (Equality, Sort, Range) Rule",
+    "topic": "Databases & Data Modeling",
+    "difficulty": "Medium",
+    "estimatedMinutes": 35,
+    "tags": [
+      "databases",
+      "mongodb",
+      "indexing",
+      "postgresql",
+      "performance"
+    ],
+    "summary": "Optimize complex multi-predicate database queries using compound B-Tree indexes and the ESR rule.",
+    "problemStatement": "A high-traffic e-commerce query searches for orders: `status = 'SHIPPED'` AND `userId = 123` AND `createdAt >= '2026-01-01'` ORDER BY `totalAmount DESC`. The current query is doing full collection scans causing high CPU load. Design the optimal compound index and explain why.",
+    "keyRequirements": [
+      "Explain the ESR (Equality, Sort, Range) rule and why index order determines scan efficiency.",
+      "Compare index `(status, userId, totalAmount, createdAt)` vs `(createdAt, status, userId, totalAmount)`.",
+      "Explain index selectivity, covering indexes, and index prefix matching.",
+      "Write the exact Mongoose schema index or PostgreSQL CREATE INDEX statement."
+    ],
+    "starterCode": "// MongoDB Query:\n// db.orders.find({\n//   status: 'SHIPPED',\n//   userId: 'usr_789',\n//   createdAt: { $gte: ISODate('2026-01-01') }\n// }).sort({ totalAmount: -1 }).limit(20);\n\n// TODO: Write the optimal compound index and explain the field sequence.",
+    "hints": [
+      "E (Equality fields first): status, userId",
+      "S (Sort fields next): totalAmount (avoids in-memory sorting)",
+      "R (Range fields last): createdAt (once a range operator is evaluated, subsequent index keys cannot be used for sorting)"
+    ],
+    "rubric": [
+      "Identified correct index order: { status: 1, userId: 1, totalAmount: -1, createdAt: 1 } (or userId first)",
+      "Explained that putting range fields before sort forces an expensive in-memory sort",
+      "Explained covering index concept (indexOnly: true in explain plan)"
+    ]
+  },
+  {
+    "day": 5,
+    "title": "Debugging Node.js Memory Leaks & V8 Heap Profiling",
+    "topic": "Node.js & Express",
+    "difficulty": "Hard",
+    "estimatedMinutes": 45,
+    "tags": [
+      "nodejs",
+      "memory-leaks",
+      "v8",
+      "profiling",
+      "production"
+    ],
+    "summary": "Identify common Node.js memory leak patterns (closures, event listeners, global caches) and how to diagnose them.",
+    "problemStatement": "A microservice's memory continuously grows from 150MB to 1.8GB until it crashes with 'JavaScript heap out of memory'. Below are 3 code snippets. Identify which ones leak memory, why V8 garbage collection (Mark & Sweep) cannot collect them, and how to fix them.",
+    "keyRequirements": [
+      "Analyze closures retaining outer scope variables.",
+      "Analyze unremoved EventEmitter / socket event listeners.",
+      "Analyze unbounded in-memory cache objects without eviction / LRU.",
+      "Demonstrate how to generate heap snapshots in Node.js using `v8.getHeapSnapshot()` or `--inspect`."
+    ],
+    "starterCode": "// Snippet A: The Unbounded Map Cache\nconst cache = {};\napp.get('/user/:id', (req, res) => {\n  if (!cache[req.params.id]) cache[req.params.id] = fetchUser(req.params.id);\n  res.json(cache[req.params.id]);\n});\n\n// Snippet B: The Event Listener Leak\nimport { EventEmitter } from 'events';\nconst globalEmitter = new EventEmitter();\napp.get('/events', (req, res) => {\n  globalEmitter.on('update', (data) => res.write(JSON.stringify(data)));\n  // What happens when client disconnects?\n});\n\n// Snippet C: The Lingering Closure\nlet theThing = null;\nfunction replaceThing() {\n  let originalThing = theThing;\n  let unused = function () {\n    if (originalThing) console.log('hi');\n  };\n  theThing = { longStr: new Array(1000000).join('*'), someMethod: function () {} };\n}",
+    "hints": [
+      "In Snippet B: If req.on('close') is not removing the listener from globalEmitter, each HTTP request adds a permanent callback to the emitter!",
+      "In Snippet A: Without a max size or LRU/TTL, cache grows indefinitely. Redis or an lru-cache should be used."
+    ],
+    "rubric": [
+      "Identified memory leak mechanics in all 3 snippets",
+      "Wrote cleanup logic for event emitters (`req.on('close', () => globalEmitter.removeListener(...))`",
+      "Explained generation of heap snapshot with `--max-old-space-size` and inspection in Chrome DevTools"
+    ]
+  },
+  {
+    "day": 6,
+    "title": "Distributed Locking with Redis (Redlock Algorithm & Fencing Tokens)",
+    "topic": "Redis & Caching",
+    "difficulty": "Hard",
+    "estimatedMinutes": 45,
+    "tags": [
+      "redis",
+      "distributed-lock",
+      "concurrency",
+      "redlock"
+    ],
+    "summary": "Implement a distributed lock in Redis with auto-expiry, unique owner identifiers, and safe atomic release via Lua.",
+    "problemStatement": "Two background workers run concurrently and attempt to generate the monthly invoice for the same tenant. If both run simultaneously, duplicate invoices and charges occur. Build a distributed lock helper `withLock(lockKey, ttlMs, callback)`.",
+    "keyRequirements": [
+      "Acquire lock using `SET key random_uuid NX PX ttlMs`.",
+      "Release lock safely using a Lua script that checks if the lock value matches the unique `random_uuid` before calling `DEL` (avoids deleting a lock acquired by another worker if TTL expired).",
+      "Explain the problem of GC pauses / network lags causing lock expiration while work is in progress.",
+      "Explain Martin Kleppmann's fencing token solution for distributed locks."
+    ],
+    "starterCode": "import Redis from 'ioredis';\nimport crypto from 'crypto';\nconst redis = new Redis();\n\nexport async function acquireLock(lockKey, ttlMs = 5000) {\n  const lockValue = crypto.randomUUID();\n  // TODO: Implement atomic lock acquisition\n}\n\nexport async function releaseLock(lockKey, lockValue) {\n  // TODO: Implement safe Lua script release\n}",
+    "hints": [
+      "Lua script for safe release: `if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('del', KEYS[1]) else return 0 end`",
+      "Fencing token: An auto-incrementing integer returned with each lock acquisition so the storage engine rejects writes with smaller tokens."
+    ],
+    "rubric": [
+      "Used unique UUID for lock owner verification",
+      "Released lock exclusively via Lua script",
+      "Accurately explained fencing token counter mechanics"
+    ]
+  },
+  {
+    "day": 7,
+    "title": "Secure OTP Generation, TTL Caching & Brute-Force Rate Limiting",
+    "topic": "Redis & Caching",
+    "difficulty": "Medium",
+    "estimatedMinutes": 35,
+    "tags": [
+      "redis",
+      "otp",
+      "security",
+      "authentication"
+    ],
+    "summary": "Design a secure, production-grade OTP generation and verification flow using Redis expiration and attempt throttling.",
+    "problemStatement": "Build an authentication OTP service in Express + Redis. Users can request a 6-digit OTP sent to their email/phone. The OTP expires in 5 minutes. To prevent brute-force attacks, lock the account after 3 consecutive wrong attempts and rate-limit OTP generation to at most 1 request every 60 seconds.",
+    "keyRequirements": [
+      "Generate cryptographically secure 6-digit OTP using `crypto.randomInt(100000, 999999)`.",
+      "Store OTP in Redis with `EX 300` (5 min TTL) hashed (e.g. SHA-256 or bcrypt) so plaintext OTP isn't exposed in Redis dumps.",
+      "Enforce cooldown: check `otp:cooldown:user` key with 60s TTL before allowing resend.",
+      "Track attempts: maintain `otp:attempts:user` key. On 3 wrong attempts, delete OTP and block for 15 minutes."
+    ],
+    "starterCode": "import crypto from 'crypto';\nimport redis from './redis.js';\n\nexport class OtpService {\n  async generateOtp(userId) {\n    // TODO: Cooldown check, generate secure 6 digits, hash, store with TTL\n  }\n\n  async verifyOtp(userId, userProvidedOtp) {\n    // TODO: Check attempts, verify hash, delete on success, block on 3 fails\n  }\n}",
+    "hints": [
+      "Use crypto.timingSafeEqual when comparing hashes to prevent timing attacks.",
+      "Delete the OTP immediately after successful verification to prevent replay attacks."
+    ],
+    "rubric": [
+      "Stored hashed OTP with TTL in Redis",
+      "Implemented 60-second generation cooldown",
+      "Tracked attempts and locked after 3 failures",
+      "Cleaned up keys after success or lockout"
+    ]
+  },
+  {
+    "day": 8,
+    "title": "Streaming Massive Datasets in Node.js without High Memory Usage",
+    "topic": "Node.js & Express",
+    "difficulty": "Medium",
+    "estimatedMinutes": 35,
+    "tags": [
+      "nodejs",
+      "streams",
+      "backpressure",
+      "csv"
+    ],
+    "summary": "Process a 5GB CSV file or stream a large database export directly to HTTP response using Node.js Streams and backpressure handling.",
+    "problemStatement": "An endpoint `/export/transactions.csv` crashes the server with Out-of-Memory when exporting 500,000 records. Refactor the endpoint to stream data from the database cursor directly into an HTTP response using Node.js stream pipelines, Transform streams, and proper backpressure.",
+    "keyRequirements": [
+      "Explain the 4 types of Node.js streams (Readable, Writable, Transform, Duplex).",
+      "Explain backpressure: what happens when readable stream produces data faster than writable stream can consume.",
+      "Use `stream.pipeline` instead of `.pipe()` to ensure proper cleanup on client abort / network errors.",
+      "Transform database documents into CSV chunks on the fly."
+    ],
+    "starterCode": "import { pipeline } from 'stream/promises';\nimport { Transform } from 'stream';\nimport express from 'express';\n\nconst app = express();\n\napp.get('/export/transactions', async (req, res) => {\n  res.setHeader('Content-Type', 'text/csv');\n  res.setHeader('Content-Disposition', 'attachment; filename=transactions.csv');\n  \n  // TODO: Use Mongoose cursor or PostgreSQL stream with pipeline(cursor, transform, res)\n});",
+    "hints": [
+      "Using .pipe() does not automatically destroy streams when an error occurs, leading to memory/file descriptor leaks. Always use pipeline() from 'stream/promises' or 'stream'.",
+      "Use mongoose Query.cursor() or pg-query-stream to fetch rows in small chunks."
+    ],
+    "rubric": [
+      "Used database cursor stream instead of loading all rows into RAM",
+      "Used pipeline() for robust error handling and stream teardown",
+      "Correctly implemented Transform stream to format CSV rows"
+    ]
+  },
+  {
+    "day": 9,
+    "title": "Cache Invalidation Strategies: Cache-Aside vs Write-Through vs Write-Behind",
+    "topic": "Redis & Caching",
+    "difficulty": "Hard",
+    "estimatedMinutes": 40,
+    "tags": [
+      "redis",
+      "caching",
+      "system-design",
+      "concurrency"
+    ],
+    "summary": "Deep dive into cache consistency, cache stampede (dogpiling), cache penetration, and cache avalanche solutions.",
+    "problemStatement": "Your application has 10,000 requests per second reading product details. You must prevent 3 classic caching catastrophes: Cache Stampede (hot key expires and 5000 queries hit DB simultaneously), Cache Penetration (queries for non-existent IDs bypass cache), and Cache Avalanche (many keys expire at the same second).",
+    "keyRequirements": [
+      "Implement Cache-Aside with probabilistic early expiration (XFetch) or mutex lock to solve Cache Stampede.",
+      "Solve Cache Penetration using Bloom Filters or caching empty results (null values) with short TTL.",
+      "Solve Cache Avalanche by adding jitter (randomized seconds) to key expiration.",
+      "Compare Delete-on-Update vs Update-on-Update for database consistency."
+    ],
+    "starterCode": "import redis from './redis.js';\nimport { db } from './db.js';\n\nexport async function getProductWithMutex(productId) {\n  const cacheKey = `product:${productId}`;\n  // TODO: Check cache, if miss acquire mutex to query DB, warm cache, return\n}",
+    "hints": [
+      "Cache Avalanche fix: `const ttl = baseTTL + Math.floor(Math.random() * 300);`",
+      "Cache Stampede: Use a small Redis lock `SET lock:key token NX EX 5`. Only the winner queries the DB; losers sleep 50ms and retry cache."
+    ],
+    "rubric": [
+      "Implemented mutex lock or early refresh on cache miss",
+      "Cached empty sentinel values for non-existent IDs with TTL",
+      "Applied jitter to TTLs to prevent synchronized expiration",
+      "Explained dual-write inconsistency risks"
+    ]
+  },
+  {
+    "day": 10,
+    "title": "Designing a Webhook Delivery Engine with Exponential Backoff & DLQ",
+    "topic": "System Design & Scalability",
+    "difficulty": "Hard",
+    "estimatedMinutes": 45,
+    "tags": [
+      "system-design",
+      "webhooks",
+      "queues",
+      "resilience"
+    ],
+    "summary": "Architect a reliable webhook delivery system that guarantees at-least-once delivery, signs payloads with HMAC, and isolates failing endpoints.",
+    "problemStatement": "Your payment platform needs to dispatch webhooks (e.g. `payment.succeeded`) to external merchant servers. Merchant servers can be slow, crash, or return 500s. Design a resilient queue worker system with HMAC-SHA256 signatures, retry intervals (1m, 5m, 30m, 2h, 24h), and a Dead Letter Queue (DLQ).",
+    "keyRequirements": [
+      "Sign webhook body using `crypto.createHmac('sha256', secret)` and send signature in `X-Signature-SHA256` header.",
+      "Implement exponential backoff retry scheduling.",
+      "Move to Dead Letter Queue (DLQ) after 5 failed attempts.",
+      "Prevent slow merchant servers from clogging the queue (per-merchant concurrency limits or circuit breakers)."
+    ],
+    "starterCode": "import crypto from 'crypto';\n\nexport class WebhookDispatcher {\n  generateSignature(payload, secret) {\n    return crypto.createHmac('sha256', secret).update(JSON.stringify(payload)).digest('hex');\n  }\n\n  async dispatchWithRetry(merchantWebhookUrl, payload, attempt = 1) {\n    // TODO: Implement HTTP POST with timeout, status check, and backoff calculation\n  }\n}",
+    "hints": [
+      "Set an aggressive HTTP timeout (e.g. 5 seconds) on outgoing webhook calls so slow servers don't consume your worker threads.",
+      "Store timestamp in signature to allow merchants to prevent replay attacks."
+    ],
+    "rubric": [
+      "HMAC-SHA256 signature generation and verification protocol",
+      "Calculated exponential backoff schedule with jitter",
+      "Isolated failed webhooks into DLQ for manual inspection or alert"
+    ]
+  },
+  {
+    "day": 11,
+    "title": "Complex MongoDB Aggregation Pipelines: $facet, $lookup, and Performance",
+    "topic": "Databases & Data Modeling",
+    "difficulty": "Medium",
+    "estimatedMinutes": 35,
+    "tags": [
+      "mongodb",
+      "aggregation",
+      "databases",
+      "analytics"
+    ],
+    "summary": "Build multi-stage aggregation pipelines for faceted search, pagination, and correlated lookups without memory exhaustion.",
+    "problemStatement": "Build an analytical query endpoint that returns: 1) Paginated search results of orders matching criteria, 2) Total matching count, 3) Breakdown of sales total grouped by product category, and 4) Top 5 buying users — all in a single database roundtrip using $facet.",
+    "keyRequirements": [
+      "Use $match as the very first stage to leverage database indexes.",
+      "Use $facet to run multiple aggregation sub-pipelines simultaneously.",
+      "Avoid the 100MB RAM aggregation limit using allowDiskUse or optimized index-covered grouping.",
+      "Perform correlated $lookup with pipeline subqueries."
+    ],
+    "starterCode": "import Order from './models/Order.js';\n\nexport async function getDashboardAnalytics(filter = {}, page = 1, limit = 20) {\n  // TODO: Build single aggregation pipeline using $match, $facet, and $lookup\n}",
+    "hints": [
+      "Remember: $match and $sort at the start of pipeline can use indexes; after an $unwind or $group, indexes are no longer used for subsequent filtering.",
+      "$facet cannot use indexes directly inside its sub-pipelines, so filter globally first!"
+    ],
+    "rubric": [
+      "Placed $match at the very beginning to hit indexes",
+      "Structured $facet for parallel pagination metadata and aggregations",
+      "Demonstrated awareness of the 100MB BSON memory limit"
+    ]
+  },
+  {
+    "day": 12,
+    "title": "Graceful Shutdown in Node.js (Zero-Downtime Deployments & Signal Trapping)",
+    "topic": "Node.js & Express",
+    "difficulty": "Medium",
+    "estimatedMinutes": 30,
+    "tags": [
+      "nodejs",
+      "devops",
+      "express",
+      "kubernetes",
+      "signals"
+    ],
+    "summary": "Handle SIGTERM and SIGINT cleanly: stop accepting new requests, drain active connections, and close DB pools.",
+    "problemStatement": "When Kubernetes deploys a new container pod or ECS terminates a task, it sends SIGTERM. If your app terminates immediately with process.exit(0), active customer requests are abruptly severed and database transactions remain uncommitted. Write a production-grade graceful shutdown coordinator.",
+    "keyRequirements": [
+      "Intercept process.on('SIGTERM') and process.on('SIGINT').",
+      "Stop the HTTP server from accepting new connections via `server.close()`.",
+      "Wait for existing in-flight HTTP requests to complete (with a hard timeout fallback, e.g. 15s).",
+      "Close MongoDB connections, Redis clients, and background message queue workers cleanly.",
+      "Exit with process.exit(0) on clean exit, or process.exit(1) on forced timeout."
+    ],
+    "starterCode": "import http from 'http';\nimport mongoose from 'mongoose';\nimport redis from './redis.js';\n\nexport function setupGracefulShutdown(server, options = { timeoutMs: 15000 }) {\n  // TODO: Implement SIGTERM & SIGINT handlers and resource teardown\n}",
+    "hints": [
+      "In Node.js 18.2+, `server.closeIdleConnections()` can be called immediately to terminate keep-alive sockets that aren't handling an active request.",
+      "Make sure health check endpoints (/healthz) start returning 503 Service Unavailable immediately upon receiving SIGTERM so load balancers reroute traffic."
+    ],
+    "rubric": [
+      "Trapped both SIGTERM and SIGINT",
+      "Closed HTTP server and set hard deadline timeout",
+      "Closed Mongoose and Redis connections cleanly",
+      "Handled forced exit on timeout"
+    ]
+  },
+  {
+    "day": 13,
+    "title": "Redis Pub/Sub vs Redis Streams vs Consumer Groups",
+    "topic": "Redis & Caching",
+    "difficulty": "Hard",
+    "estimatedMinutes": 45,
+    "tags": [
+      "redis",
+      "pubsub",
+      "streams",
+      "messaging",
+      "queues"
+    ],
+    "summary": "Architect message-driven communication using Redis Streams (XADD, XREADGROUP, XACK) for persistent, fault-tolerant processing.",
+    "problemStatement": "A team used Redis Pub/Sub for background video processing notifications. When a worker restarted or crashed, all messages published during the downtime were permanently lost because Redis Pub/Sub is fire-and-forget. Migrate the architecture to Redis Streams with Consumer Groups.",
+    "keyRequirements": [
+      "Contrast Redis Pub/Sub (at-most-once, no persistence) with Redis Streams (at-least-once, log-based persistence).",
+      "Publish messages using `XADD mystream * payload data`.",
+      "Create a consumer group using `XGROUP CREATE`.",
+      "Read messages using `XREADGROUP GROUP mygroup worker1 COUNT 10 BLOCK 2000 STREAMS mystream >`.",
+      "Acknowledge processed messages with `XACK` and claim stalled messages using `XAUTOCLAIM`."
+    ],
+    "starterCode": "import Redis from 'ioredis';\nconst redis = new Redis();\n\nexport class StreamWorker {\n  constructor(streamName, groupName, consumerName) {\n    this.stream = streamName;\n    this.group = groupName;\n    this.consumer = consumerName;\n  }\n\n  async initGroup() {\n    // TODO: Create consumer group if not exists\n  }\n\n  async pollAndProcess(handler) {\n    // TODO: Continuous XREADGROUP loop with XACK and XAUTOCLAIM\n  }\n}",
+    "hints": [
+      "Use `MKSTREAM` flag when creating the group so Redis creates the stream if it doesn't already exist.",
+      "Remember: The special ID '>' means 'give me messages never delivered to any consumer in this group'."
+    ],
+    "rubric": [
+      "Correctly explained limitations of Pub/Sub vs Streams",
+      "Implemented consumer group polling with XREADGROUP",
+      "Included XACK for delivery acknowledgment and recovery of pending entries"
+    ]
+  },
+  {
+    "day": 14,
+    "title": "SQL ACID Isolation Levels & Preventing Race Conditions",
+    "topic": "Databases & Data Modeling",
+    "difficulty": "Hard",
+    "estimatedMinutes": 45,
+    "tags": [
+      "databases",
+      "sql",
+      "acid",
+      "transactions",
+      "postgresql"
+    ],
+    "summary": "Examine Dirty Reads, Non-Repeatable Reads, Phantom Reads, and Serialization Anomalies across SQL isolation levels.",
+    "problemStatement": "Two concurrent transactions attempt to book the last available seat on a flight. Under default READ COMMITTED isolation, both check `SELECT count(*) WHERE booked = false`, find 1 seat, and execute `INSERT INTO bookings`. Both receive confirmation! Demonstrate how to solve this using Optimistic Locking vs Pessimistic Locking (SELECT FOR UPDATE) vs SERIALIZABLE.",
+    "keyRequirements": [
+      "Define the 4 standard SQL isolation levels: READ UNCOMMITTED, READ COMMITTED, REPEATABLE READ, SERIALIZABLE.",
+      "Explain the phenomenon of Dirty Read, Non-Repeatable Read, and Phantom Read.",
+      "Write a Pessimistic Lock query using `SELECT ... FOR UPDATE`.",
+      "Write an Optimistic Lock query using a version/timestamp column and compare trade-offs."
+    ],
+    "starterCode": "// Option A: Pessimistic Locking (SELECT FOR UPDATE)\n// BEGIN TRANSACTION;\n// SELECT * FROM seats WHERE id = 42 AND is_booked = false FOR UPDATE;\n// UPDATE seats SET is_booked = true, user_id = 'usr_1' WHERE id = 42;\n// COMMIT;\n\n// Option B: Optimistic Locking with Version Column\n// UPDATE inventory SET quantity = quantity - 1, version = version + 1 \n// WHERE id = 101 AND version = 3;\n\n// TODO: Compare when to use Pessimistic vs Optimistic locking in high-concurrency backend services.",
+    "hints": [
+      "Pessimistic locking is ideal for high-contention write scenarios where conflicts are frequent (e.g. ticket booking).",
+      "Optimistic locking is superior for read-heavy scenarios with low write contention because it avoids holding row locks."
+    ],
+    "rubric": [
+      "Accurately defined all 4 isolation levels and anomaly types",
+      "Provided functional Pessimistic (FOR UPDATE) and Optimistic (version match) SQL examples",
+      "Compared performance and deadlock risks"
+    ]
+  },
+  {
+    "day": 15,
+    "title": "Building an Async Concurrency Limiter (p-limit) from Scratch",
+    "topic": "Node.js & Express",
+    "difficulty": "Medium",
+    "estimatedMinutes": 35,
+    "tags": [
+      "nodejs",
+      "concurrency",
+      "async",
+      "algorithms"
+    ],
+    "summary": "Implement a custom concurrency pool to execute 1,000 async tasks with at most N running concurrently.",
+    "problemStatement": "`Promise.all(urls.map(fetch))` fires all 1,000 requests simultaneously, exhausting network sockets, triggering 429 Too Many Requests, and crashing external APIs. Without using third-party packages like `p-limit`, build a lightweight concurrency limiter `pLimit(concurrency)` from first principles.",
+    "keyRequirements": [
+      "Accept a maximum concurrency limit `N` (e.g. 5).",
+      "Return a wrapper function `limit(fn)` that returns a Promise.",
+      "Enqueue tasks in an internal queue if active workers == N.",
+      "When an active task settles (resolves or rejects), immediately pull the next task from the queue and execute it.",
+      "Ensure all original rejection and resolution values propagate correctly."
+    ],
+    "starterCode": "/**\n * @param {number} concurrency Maximum concurrent active promises\n * @returns {<T>(fn: () => Promise<T>) => Promise<T>}\n */\nexport function pLimit(concurrency = 5) {\n  const queue = [];\n  let activeCount = 0;\n\n  // TODO: Implement concurrency control queue\n  return function (fn) {\n    return new Promise((resolve, reject) => {\n      // ...\n    });\n  };\n}",
+    "hints": [
+      "Define a next() helper: if activeCount < concurrency and queue has items, dequeue, activeCount++, execute, and on complete activeCount--, next().",
+      "Always attach .finally() or try/finally so activeCount decrements even on errors!"
+    ],
+    "rubric": [
+      "Guaranteed that no more than N promises run simultaneously",
+      "Handled rejections properly without breaking the queue",
+      "Maintained execution order and returned resolved values"
+    ]
+  },
+  {
+    "day": 16,
+    "title": "Counting Billions of Unique Users with Redis HyperLogLog & Bitmaps",
+    "topic": "Redis & Caching",
+    "difficulty": "Medium",
+    "estimatedMinutes": 35,
+    "tags": [
+      "redis",
+      "analytics",
+      "hyperloglog",
+      "bitmaps"
+    ],
+    "summary": "Calculate Daily Active Users (DAU) and Monthly Active Users (MAU) using Redis HyperLogLog and Bitmaps with fixed memory.",
+    "problemStatement": "Your service tracks 100 million daily active users. Storing user IDs in a Redis SET requires ~1.5GB of RAM per day. Switch to Redis HyperLogLog (PFADD, PFCOUNT, PFMERGE) for cardinality estimation with < 12KB memory and 0.81% error rate, or Bitmaps (SETBIT, BITCOUNT, BITOP) for exact user activity tracking.",
+    "keyRequirements": [
+      "Use `PFADD dau:2026-09-20 userId` to register user visits.",
+      "Calculate DAU with `PFCOUNT dau:2026-09-20`.",
+      "Calculate weekly/monthly active users by merging logs with `PFMERGE mau:september dau:day1 dau:day2 ...`.",
+      "Compare HyperLogLog (probabilistic, fixed 12KB) vs Bitmap (exact, 1 bit per user ID) vs Set."
+    ],
+    "starterCode": "import Redis from 'ioredis';\nconst redis = new Redis();\n\nexport class ActivityTracker {\n  async trackUserVisit(userId, dateStr) {\n    // TODO: Track with HyperLogLog and Bitmap\n  }\n\n  async getDau(dateStr) {\n    // TODO: Return estimated unique visitors\n  }\n}",
+    "hints": [
+      "HyperLogLog uses standard 12KB memory regardless of whether you have 100 or 100,000,000 items.",
+      "Bitmaps require auto-incrementing integer user IDs (e.g. user #5421 maps to bit index 5421)."
+    ],
+    "rubric": [
+      "Demonstrated usage of PFADD and PFCOUNT",
+      "Explained memory trade-off (12KB fixed size vs Set memory growth)",
+      "Used BITOP AND/OR to analyze recurring user retention"
+    ]
+  },
+  {
+    "day": 17,
+    "title": "Designing a Multi-Channel Notification Service (Email, SMS, Push)",
+    "topic": "System Design & Scalability",
+    "difficulty": "Hard",
+    "estimatedMinutes": 45,
+    "tags": [
+      "system-design",
+      "notifications",
+      "architecture",
+      "queues"
+    ],
+    "summary": "Architect an enterprise notification service supporting priority queues, user preferences, rate limiting, and vendor fallbacks.",
+    "problemStatement": "Design a notification platform capable of dispatching 10 million notifications daily across Email (SendGrid/SES), SMS (Twilio), and Push (FCM). The system must support user opt-outs, deduplication, priority channels (OTP/Security vs Marketing), and automatic failover to secondary vendors if primary vendor returns 5xx.",
+    "keyRequirements": [
+      "Design message ingestion API with priority tiers (High: OTP/Alerts, Normal: Receipts, Low: Marketing).",
+      "User preference engine: Check if user unsubscribed or set 'Quiet Hours' (e.g. no push between 10pm-8am).",
+      "Per-user notification rate limiter (max 3 marketing emails per day).",
+      "Circuit breaker & vendor failover for external SMS/Email APIs."
+    ],
+    "starterCode": "export class NotificationService {\n  async sendNotification({ userId, templateId, channel, priority, data }) {\n    // TODO: Design flow: Check prefs -> Rate limit -> Enqueue -> Dispatch -> Fallback\n  }\n}",
+    "hints": [
+      "Use separate message queues for each priority tier so promotional email blasts never delay time-critical password reset OTPs.",
+      "Store idempotency key per notification to prevent duplicate SMS charges on retries."
+    ],
+    "rubric": [
+      "Separated queues by priority to prevent starvation",
+      "Checked user preferences and quiet-hours timezone logic",
+      "Included circuit breaker / vendor fallback logic",
+      "Guaranteed deduplication via unique event hash"
+    ]
+  },
+  {
+    "day": 18,
+    "title": "Scaling Databases: Sharding vs Partitioning vs Read Replicas",
+    "topic": "Databases & Data Modeling",
+    "difficulty": "Hard",
+    "estimatedMinutes": 45,
+    "tags": [
+      "databases",
+      "scaling",
+      "sharding",
+      "replication",
+      "system-design"
+    ],
+    "summary": "Evaluate vertical vs horizontal scaling, primary-replica replication lag, and sharding strategies (Hash vs Range vs Geo).",
+    "problemStatement": "Your PostgreSQL/MongoDB database has grown to 5TB and 30,000 queries per second. A single large instance can no longer sustain the write load and replication lag to read replicas is causing users to see stale data after updates. Architect a horizontal scaling and sharding strategy.",
+    "keyRequirements": [
+      "Compare Read Replicas (read scaling) vs Sharding (write scaling).",
+      "Explain Replication Lag and how to ensure 'Read-Your-Own-Writes' consistency.",
+      "Choose a Shard Key for an e-commerce platform (e.g. userId vs orderId vs tenantId) and explain hot spotting / celebrity problem.",
+      "Explain how cross-shard joins and distributed transactions (2PC - Two-Phase Commit) are handled."
+    ],
+    "starterCode": "// Architecture Scenario:\n// 1. User writes comment on post (writes to Primary DB)\n// 2. Client immediately refreshes page and reads from Replica DB (Replication lag is 300ms)\n// 3. User does NOT see their own comment!\n\n// TODO: Explain 3 strategies to guarantee Read-Your-Own-Writes consistency.",
+    "hints": [
+      "Strategy 1 for Read-Your-Own-Writes: Route reads from the same user to the Primary DB for a few seconds following any write.",
+      "Strategy 2: Track Write LSN (Log Sequence Number) and only read from replicas that caught up to that LSN."
+    ],
+    "rubric": [
+      "Distinguished read scaling (replicas) from write scaling (sharding)",
+      "Selected appropriate shard key and addressed data skew / re-sharding",
+      "Explained Read-Your-Own-Writes solutions (LSN / sticky session to primary)"
+    ]
+  },
+  {
+    "day": 19,
+    "title": "Worker Threads & Clustering in Node.js for CPU-Intensive Tasks",
+    "topic": "Node.js & Express",
+    "difficulty": "Medium",
+    "estimatedMinutes": 35,
+    "tags": [
+      "nodejs",
+      "worker-threads",
+      "cluster",
+      "cpu-bound"
+    ],
+    "summary": "Offload CPU-intensive operations (image resizing, PDF generation, heavy cryptography) without blocking the Node.js event loop.",
+    "problemStatement": "A single route `/generate-report` does a heavy 3-second cryptographic calculation. When 10 users hit it, all other API requests are blocked and time out because Node's single thread is monopolized. Compare and implement Node's `cluster` module vs `worker_threads`.",
+    "keyRequirements": [
+      "Explain the difference between Node's Cluster module (multiple OS processes sharing a port) and Worker Threads (threads sharing memory via SharedArrayBuffer).",
+      "Spawn a worker thread using `worker_threads` to process CPU work.",
+      "Pass data to worker and receive results using `parentPort.postMessage()`.",
+      "Ensure thread pool reuse rather than creating new threads per HTTP request."
+    ],
+    "starterCode": "import { Worker, isMainThread, parentPort, workerData } from 'worker_threads';\nimport express from 'express';\n\nconst app = express();\n\napp.post('/calculate', async (req, res) => {\n  // TODO: Delegate work to worker thread and return response when done\n});",
+    "hints": [
+      "Spawning a thread has memory and CPU overhead (approx 20-30ms). Use a worker pool (like piscina) in production.",
+      "For I/O tasks, worker threads do NOT add performance because libuv already handles async I/O in the threadpool!"
+    ],
+    "rubric": [
+      "Clear distinction between Cluster (processes) and Worker Threads (threads)",
+      "Correct implementation of Worker instance and message passing",
+      "Proper error handling when worker throws an unhandled exception"
+    ]
+  },
+  {
+    "day": 20,
+    "title": "Token Bucket Rate Limiter with Atomic Redis Lua Scripts",
+    "topic": "Redis & Caching",
+    "difficulty": "Hard",
+    "estimatedMinutes": 45,
+    "tags": [
+      "redis",
+      "lua",
+      "rate-limiting",
+      "algorithms"
+    ],
+    "summary": "Implement the Token Bucket algorithm in Redis using a Lua script to support smooth burst handling with zero race conditions.",
+    "problemStatement": "Unlike sliding window logs (which store every timestamp and consume high memory), Token Bucket allows bursts up to capacity `C` and refills tokens at rate `R` tokens per second using only 2 stored numbers: current tokens and last refill timestamp.",
+    "keyRequirements": [
+      "Store `{ tokens, lastRefillTimestamp }` in a Redis Hash.",
+      "Write a Redis Lua script: calculate elapsed time, refill tokens proportionally up to bucket capacity, and decrement 1 token if available.",
+      "Execute the script via `redis.eval()` with atomic guarantees.",
+      "Return headers: `X-RateLimit-Limit`, `X-RateLimit-Remaining`, `Retry-After`."
+    ],
+    "starterCode": "const tokenBucketLua = `\n-- KEYS[1]: rate limiter key\n-- ARGV[1]: capacity (max tokens)\n-- ARGV[2]: refill rate (tokens per second)\n-- ARGV[3]: current timestamp in seconds\n-- ARGV[4]: requested tokens (default 1)\n\n-- TODO: Write Lua script to refill and consume tokens\n`;",
+    "hints": [
+      "Tokens to add: `math.min(capacity, current_tokens + (elapsed * refill_rate))`",
+      "If `tokens >= requested`, decrement and return 1 (allowed), else return 0 (rejected)."
+    ],
+    "rubric": [
+      "Correct token refill math based on elapsed time",
+      "Lua script guarantees atomicity without Redis transactions or race conditions",
+      "Memory efficient: only stores 2 fields per user/IP"
+    ]
+  }
+]
