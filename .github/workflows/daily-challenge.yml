@@ -1,0 +1,40 @@
+name: Daily Backend Interview Practice
+
+on:
+  schedule:
+    # Runs daily at 03:00 UTC (8:30 AM IST)
+    - cron: '0 3 * * *'
+  workflow_dispatch:
+    inputs:
+      day:
+        description: 'Specify a day number to post (leave blank for next sequential day)'
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  post-daily-challenge:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Post Daily Practice Issue
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: |
+          if [ -n "${{ github.event.inputs.day }}" ]; then
+            node scripts/post-challenge.js --day "${{ github.event.inputs.day }}"
+          else
+            node scripts/post-challenge.js
+          fi
